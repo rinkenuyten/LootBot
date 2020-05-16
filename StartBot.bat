@@ -1,0 +1,1 @@
+START "Bot" node src/js/Bot.js
