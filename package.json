@@ -1,7 +1,7 @@
 {
   "name": "LootBot",
   "version": "0.0.1",
-  "description": "A discord bot designed as a hobby project",
+  "description": "A discord bot designed as a hobby project.",
   "main": "Bot.js",
   "author": "Rinke Nuijten",
   "license": "ISC",
