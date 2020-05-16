@@ -1,3 +1,3 @@
 # LootBot
 
-LootBot is a work in progress hobbyproject, meaning to bring some entertainment to discord servers.
+LootBot is a work in progress hobbyproject for one of my own discord servers, meaning to deliver some entertainment when just chatting.
