@@ -4,7 +4,6 @@ Bot = function(){
     this.Discord = require("discord.js");
     this.client = new this.Discord.Client();
     this.botSettings = require(__dirname  + '/config/BotConfig.js');
-
     this.currencyType = "Dollars";
 
     this.initialize();
