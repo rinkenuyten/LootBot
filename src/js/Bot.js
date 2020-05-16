@@ -6,17 +6,31 @@ Bot = function(){
     this.botSettings = require(__dirname  + '/config/BotConfig.js');
     this.currencyType = "Dollars";
 
-    this.initialize();
+    this.initializeDatabase();
+    this.initializeClient();
 };
 
 Bot.prototype = {
-    initialize: function() {
+
+    initializeDatabase: function() {
+        //lowdb database requirements
+        const low = require('lowdb');
+        const FileSync = require('lowdb/adapters/FileSync');  
+        const adapter = new FileSync('db.json');
+        this.db = low(adapter);
+
+        this.db.defaults({ users:[], currencyType: this.currencyType})
+            .write();            
+    },
+
+    initializeClient: function() {
         this.client.on('ready', () => {
             this.client.user.setActivity('Gambling').then(function(){
                 console.log(`${this.client.user.username} activity set!`);
             }.bind(this));
         });
 
+        //Login
         this.client.login(this.botSettings.Config.TOKEN).then(function(){
             console.log(`${this.client.user.username} is logged in!`);
         }.bind(this));
@@ -38,7 +52,7 @@ Bot.prototype = {
                 this.ping(message);
             }
 
-            if (command === "setcurrency"){
+            if (command === "setcurrencytype"){
                 if (!message.member.hasPermission("ADMINISTRATOR")) 
                     return;
 
@@ -48,6 +62,8 @@ Bot.prototype = {
                     return;
 
                 this.currencyType = newCurrencyType;
+                this.db.update('currencyType', this.currencyType)
+                    .write()
 
                 const m = await message.channel.send("The currency type is changed to: " + this.currencyType);
             }
@@ -56,16 +72,32 @@ Bot.prototype = {
                 if (!message.member.hasPermission("ADMINISTRATOR")) 
                     return;
 
-                this.dispenseCurrency();    
+                let amount = args.slice(0).join(' ');
+
+                if(amount == "") 
+                    return;
+
+                this.dispenseCurrency(amount);  
+                const m = await message.channel.send("Everyone got " + amount + " " + this.currencyType);  
+            }
+
+            if(command == "amount"){
+                var amount = this.getCurrencyAmountFromPlayer(message.member.id);
+
+                if(amount == -1){
+                    const m = await message.channel.send("You got no " + this.currencyType);
+                    return;
+                }
+
+                const m = await message.channel.send("You got " + amount + " " + this.currencyType);
             }
         });
     },
 
     setBotCurrencyDispenseTimer: function(){
         let _this = this;
-        setInterval(function(){_this.dispenseCurrency();}, 600000); //run every 10 minutes
+        setInterval(function(){_this.dispenseCurrency(10);}, 600000); //run every 10 minutes
     },
-
 
     ping: async function (message) {     
         if (!message.member.hasPermission("ADMINISTRATOR"))
@@ -77,22 +109,45 @@ Bot.prototype = {
         m.edit(`Pong! Latency is ${m.createdTimestamp - message.createdTimestamp}ms. API Latency is ${Math.round(this.client.ping)}ms`);
     },
 
-    dispenseCurrency: function(){
-        var userIndex;
+    dispenseCurrency: function(amount){       
         this.client.users.cache.map((user) => {
             if(user.presence.status != "offline" && !user.bot){
-                console.log(user.username);
+                this.addCurrencyToPlayer(user.id, amount);
             }           
-        });
-     
-        // for(userIndex in this.client.users.array()){
-        //     var user = this.client.users.array()[userIndex];
-        //     if(user.presence.status != "offline"){
-        //     console.log(User.username);
-        //     }
-        // }
-    }
+        }); 
+    },
 
+    addCurrencyToPlayer: function(id, addedAmount){      
+        let user = this.db.get('users')
+            .find({ id: id })
+            .value();
+
+        if(typeof(user) == "undefined"){
+            this.db.get('users')
+                .push({ id: id, amount: addedAmount})
+                .write();
+            return;
+        }    
+            
+        var newAmount = Number(user.amount) + Number(addedAmount);
+
+        this.db.get('users')
+            .find({ id: id })
+            .assign({ amount: newAmount})
+            .write();
+    },
+
+    getCurrencyAmountFromPlayer: function(id){
+        let user = this.db.get('users')
+        .find({ id: id })
+        .value();
+
+        if(typeof(user) == "undefined"){       
+            return -1;
+        }
+        
+        return user.amount;
+    }
 };
 
 new Bot();

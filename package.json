@@ -6,6 +6,7 @@
   "author": "Rinke Nuijten",
   "license": "ISC",
   "dependencies": {
-    "discord.js": "12.2.0"
+    "discord.js": "12.2.0",
+    "lowdb": "^1.0.0"
   }
 }
