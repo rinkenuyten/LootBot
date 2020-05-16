@@ -48,6 +48,24 @@ Bot.prototype = {
             const args = message.content.slice(this.botSettings.Config.PREFIX.length).trim().split(/ +/g);
             const command = args.shift().toLowerCase();
 
+            if(command === "help"){
+                var cmds = `
+
+                !help - you dummy that is this command
+                !ping [Admin only] - gets ping between bot & server
+                !setcurrencytype [Admin only] - sets the currency type people collect
+                !dispensecurrency <amount> [Admin only] - give everyone online x amount of `+this.currencyType+`
+                !amount - get your amount of `+this.currencyType+`
+                !give <@Person> <amount> - give the tagged person x amount of `+this.currencyType+`
+                        `;
+
+                let embed = new this.Discord.MessageEmbed()
+                    .setColor("#d86c24")
+                    .addField("I support the following commmands", cmds, true);
+
+                const m = await message.channel.send(embed);
+            }
+
             if(command === "ping") {
                 this.ping(message);
             }
@@ -68,7 +86,7 @@ Bot.prototype = {
                 const m = await message.channel.send("The currency type is changed to: " + this.currencyType);
             }
 
-            if(command == "dispensecurrency"){
+            if(command === "dispensecurrency"){
                 if (!message.member.hasPermission("ADMINISTRATOR")) 
                     return;
 
@@ -81,7 +99,7 @@ Bot.prototype = {
                 const m = await message.channel.send("Everyone got " + amount + " " + this.currencyType);  
             }
 
-            if(command == "amount"){
+            if(command === "amount"){
                 var amount = this.getCurrencyAmountFromPlayer(message.member.id);
 
                 if(amount == -1){
@@ -91,6 +109,36 @@ Bot.prototype = {
 
                 const m = await message.channel.send("You got " + amount + " " + this.currencyType);
             }
+
+            if(command === "give"){
+                if(message.mentions.users.array().length === 0){
+                    const m = await message.channel.send("Tag someone to give " + this.currencyType);
+                    return;
+                }
+
+                let taggedPlayerId = message.mentions.users.array()[0].id;
+
+                let amount = args[1];
+
+                if(typeof(amount) == "undefined"){
+                    const m = await message.channel.send("Define an amount to give");
+                    return;
+                }
+           
+                if(!Number.isInteger(Number(amount))){
+                    console.log(amount + " is not a number");
+                    const m = await message.channel.send("Defined amount is not a number");
+                    return;
+                }
+
+                let isPossible = this.donateCurrencyToPlayer(message.author.id, taggedPlayerId, amount);
+
+                if(!isPossible){
+                    const m = await message.channel.send("Failed to send " + this.currencyType);
+                    return;
+                }
+                const m = await message.channel.send("Transferred " + amount + " " + this.currencyType + " to " + message.mentions.users.array()[0].username);
+            }
         });
     },
 
@@ -99,12 +147,13 @@ Bot.prototype = {
         setInterval(function(){_this.dispenseCurrency(10);}, 600000); //run every 10 minutes
     },
 
+    // Calculates ping between sending a message and editing it, giving a nice round-trip latency.
+    // The second ping is an average latency between the bot and the websocket server (one-way, not round-trip)   
     ping: async function (message) {     
         if (!message.member.hasPermission("ADMINISTRATOR"))
             return;
 
-        // Calculates ping between sending a message and editing it, giving a nice round-trip latency.
-        // The second ping is an average latency between the bot and the websocket server (one-way, not round-trip)
+
         const m = await message.channel.send("Ping?");
         m.edit(`Pong! Latency is ${m.createdTimestamp - message.createdTimestamp}ms. API Latency is ${Math.round(this.client.ping)}ms`);
     },
@@ -117,19 +166,20 @@ Bot.prototype = {
         }); 
     },
 
-    addCurrencyToPlayer: function(id, addedAmount){      
+    addCurrencyToPlayer: function(id, amountToAdd){      
         let user = this.db.get('users')
             .find({ id: id })
             .value();
 
+        //if no playerdata exists, create a new record    
         if(typeof(user) == "undefined"){
             this.db.get('users')
-                .push({ id: id, amount: addedAmount})
+                .push({ id: id, amount: amountToAdd})
                 .write();
             return;
         }    
             
-        var newAmount = Number(user.amount) + Number(addedAmount);
+        var newAmount = Number(user.amount) + Number(amountToAdd);
 
         this.db.get('users')
             .find({ id: id })
@@ -137,17 +187,49 @@ Bot.prototype = {
             .write();
     },
 
-    getCurrencyAmountFromPlayer: function(id){
+    removeCurrencyFromPlayer: function(id, amountToRemove){
         let user = this.db.get('users')
         .find({ id: id })
         .value();
 
+        if(typeof(user) == "undefined"){          
+            return false;
+        }    
+
+        if(user.amount < amountToRemove){
+            return false;
+        }
+
+        var newAmount = Number(user.amount) - Number(amountToRemove);
+
+        this.db.get('users')
+            .find({ id: id })
+            .assign({ amount: newAmount})
+            .write();
+
+        return true;    
+    },
+
+    getCurrencyAmountFromPlayer: function(id){
+        let user = this.db.get('users')
+        .find({ id: id })
+        .value();
+ 
         if(typeof(user) == "undefined"){       
             return -1;
         }
         
         return user.amount;
-    }
+    },
+
+    donateCurrencyToPlayer: function(senderId, receiverId, amount){
+        if(this.removeCurrencyFromPlayer(senderId, amount)){
+            this.addCurrencyToPlayer(receiverId, amount);
+            return true;
+        }else{
+            return false;
+        }    
+    },
 };
 
 new Bot();
