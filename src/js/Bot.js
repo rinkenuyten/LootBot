@@ -3,25 +3,19 @@ Bot = function(){
 
     this.Discord = require("discord.js");
     this.client = new this.Discord.Client();
-    this.botSettings = require(__dirname  + '/config/BotConfig.js');
-    this.currencyType = "Dollars";
 
-    this.initializeDatabase();
+    require(__dirname  + '/Persistance.js');
+
+    this.persistance = new Persistance();
+
+    this.botSettings = require(__dirname  + '/config/BotConfig.js');
+
+    this.currencyType = this.botSettings.Config.CURRENCY_TYPE;
+
     this.initializeClient();
 };
 
 Bot.prototype = {
-
-    initializeDatabase: function() {
-        //lowdb database requirements
-        const low = require('lowdb');
-        const FileSync = require('lowdb/adapters/FileSync');  
-        const adapter = new FileSync('db.json');
-        this.db = low(adapter);
-
-        this.db.defaults({ users:[], currencyType: this.currencyType})
-            .write();            
-    },
 
     initializeClient: function() {
         this.client.on('ready', () => {
@@ -51,13 +45,12 @@ Bot.prototype = {
             if(command === "help"){
                 var cmds = `
 
-                !help - you dummy that is this command
-                !ping [Admin only] - gets ping between bot & server
-                !setcurrencytype [Admin only] - sets the currency type people collect
+                !help - you dummy that's this command
+                !ping [Admin only] - gets the ping between bot & server
                 !dispensecurrency <amount> [Admin only] - give everyone online x amount of `+this.currencyType+`
                 !amount - get your amount of `+this.currencyType+`
-                !give <@Person> <amount> - give the tagged person x amount of `+this.currencyType+`
-                        `;
+                !give <@User> <amount> - give the tagged user x amount of `+this.currencyType+`
+                `;
 
                 let embed = new this.Discord.MessageEmbed()
                     .setColor("#d86c24")
@@ -68,22 +61,6 @@ Bot.prototype = {
 
             if(command === "ping") {
                 this.ping(message);
-            }
-
-            if (command === "setcurrencytype"){
-                if (!message.member.hasPermission("ADMINISTRATOR")) 
-                    return;
-
-                let newCurrencyType = args.slice(0).join(' ');
-
-                if(newCurrencyType == "") 
-                    return;
-
-                this.currencyType = newCurrencyType;
-                this.db.update('currencyType', this.currencyType)
-                    .write()
-
-                const m = await message.channel.send("The currency type is changed to: " + this.currencyType);
             }
 
             if(command === "dispensecurrency"){
@@ -100,14 +77,14 @@ Bot.prototype = {
             }
 
             if(command === "amount"){
-                var amount = this.getCurrencyAmountFromPlayer(message.member.id);
-
-                if(amount == -1){
-                    const m = await message.channel.send("You got no " + this.currencyType);
-                    return;
-                }
-
-                const m = await message.channel.send("You got " + amount + " " + this.currencyType);
+                this.getCurrencyAmountFromUser(message.member.id).then(async function(amount){
+                    if(amount == -1){
+                        const m = await message.channel.send("You got no " + this.currencyType);
+                        return;
+                    }
+    
+                    const m = await message.channel.send("You got " + amount + " " + this.currencyType);
+                }.bind(this));     
             }
 
             if(command === "give"){
@@ -116,7 +93,7 @@ Bot.prototype = {
                     return;
                 }
 
-                let taggedPlayerId = message.mentions.users.array()[0].id;
+                let taggedUserId = message.mentions.users.array()[0].id;
 
                 let amount = args[1];
 
@@ -131,24 +108,31 @@ Bot.prototype = {
                     return;
                 }
 
-                let isPossible = this.donateCurrencyToPlayer(message.author.id, taggedPlayerId, amount);
-
-                if(!isPossible){
+                this.donateCurrencyToUser(message.author.id, taggedUserId, amount).then( async function(success){
+                    if(success){
+                        const m = await message.channel.send("Transferred " + amount + " " + this.currencyType + " to " + message.mentions.users.array()[0].username);
+                        return;
+                    }
                     const m = await message.channel.send("Failed to send " + this.currencyType);
-                    return;
-                }
-                const m = await message.channel.send("Transferred " + amount + " " + this.currencyType + " to " + message.mentions.users.array()[0].username);
+                }.bind(this))
             }
         });
     },
 
+    /**
+     * Set the dispense currency timer to give all online users X amount every Y minutes.
+     * @TODO: X and Y should be able to be defined in the config file.
+     */
     setBotCurrencyDispenseTimer: function(){
         let _this = this;
         setInterval(function(){_this.dispenseCurrency(10);}, 600000); //run every 10 minutes
     },
 
-    // Calculates ping between sending a message and editing it, giving a nice round-trip latency.
-    // The second ping is an average latency between the bot and the websocket server (one-way, not round-trip)   
+    /**
+     * Calculates ping between sending a message and editing it, giving a nice round-trip latency.
+     * The second ping is an average latency between the bot and the websocket server (one-way, not round-trip)   
+     * @param {Discord.message} message - The discord message
+     */
     ping: async function (message) {     
         if (!message.member.hasPermission("ADMINISTRATOR"))
             return;
@@ -158,77 +142,105 @@ Bot.prototype = {
         m.edit(`Pong! Latency is ${m.createdTimestamp - message.createdTimestamp}ms. API Latency is ${Math.round(this.client.ping)}ms`);
     },
 
+    /**
+     * Dispense currency to all online users
+     * @param {number} amount - Amount of currency to add
+     */ 
     dispenseCurrency: function(amount){       
         this.client.users.cache.map((user) => {
             if(user.presence.status != "offline" && !user.bot){
-                this.addCurrencyToPlayer(user.id, amount);
+                this.addCurrencyToUser(user.id, amount);
             }           
         }); 
     },
 
-    addCurrencyToPlayer: function(id, amountToAdd){      
-        let user = this.db.get('users')
-            .find({ id: id })
-            .value();
+    /**
+     * Add currency to a user
+     * @param {number} id - A userId
+     * @param {number} amountToAdd - Amount of currency to add
+     * @returns {Query} - Returns a mongoose query
+     */ 
+    addCurrencyToUser: function(id, amountToAdd){      
+        return this.persistance.getUserById(id).then( function(userData){       
+            if(userData === null){
+                this.createNewUser(id, amountToAdd);
+                return;               
+            }
+     
+            userData.amount = Number(userData.amount) + Number(amountToAdd);
 
-        //if no playerdata exists, create a new record    
-        if(typeof(user) == "undefined"){
-            this.db.get('users')
-                .push({ id: id, amount: amountToAdd})
-                .write();
-            return;
-        }    
+            this.persistance.updateUser(userData).exec();
+        }.bind(this));
+    },
+
+    /**
+     * Creates a new user in the database
+     * @param {number} id - A userId
+     * @param {number} amount - Amount of currency to add
+     */ 
+    createNewUser: function(id, amount){
+        this.persistance.createUser(id, amount).then(function(result){
             
-        var newAmount = Number(user.amount) + Number(amountToAdd);
-
-        this.db.get('users')
-            .find({ id: id })
-            .assign({ amount: newAmount})
-            .write();
+        }.bind(this));
     },
+  
+    /**
+     * Remove currency from a user
+     * @param {number} id - A userId
+     * @param {number} amountToRemove - Amount of currency to add
+     * @returns {Query} - Returns a mongoose query with true or false based on succession
+     */ 
+    removeCurrencyFromUser: function(id, amountToRemove){     
+        return this.persistance.getUserById(id).then( function(userData){       
+            if(userData === null){
+                this.createNewUser(id);
+                return false;               
+            }
 
-    removeCurrencyFromPlayer: function(id, amountToRemove){
-        let user = this.db.get('users')
-        .find({ id: id })
-        .value();
+            if(userData.amount < amountToRemove){
+                return false;
+            }
+            
+            userData.amount = Number(userData.amount) - Number(amountToRemove);
 
-        if(typeof(user) == "undefined"){          
-            return false;
-        }    
-
-        if(user.amount < amountToRemove){
-            return false;
-        }
-
-        var newAmount = Number(user.amount) - Number(amountToRemove);
-
-        this.db.get('users')
-            .find({ id: id })
-            .assign({ amount: newAmount})
-            .write();
-
-        return true;    
-    },
-
-    getCurrencyAmountFromPlayer: function(id){
-        let user = this.db.get('users')
-        .find({ id: id })
-        .value();
- 
-        if(typeof(user) == "undefined"){       
-            return -1;
-        }
-        
-        return user.amount;
-    },
-
-    donateCurrencyToPlayer: function(senderId, receiverId, amount){
-        if(this.removeCurrencyFromPlayer(senderId, amount)){
-            this.addCurrencyToPlayer(receiverId, amount);
+            this.persistance.updateUser(userData).exec();
             return true;
-        }else{
+        }.bind(this)); 
+    },
+
+    /**
+     * Get the current amount of currency from a user
+     * @param {number} id - A userId
+     * @returns {Query} - Returns a mongoose query with -1 or the amount of currency
+     */ 
+    getCurrencyAmountFromUser: function(id){
+        return this.persistance.getUserById(id).then( function(userData){       
+            if(userData === null){
+                console.log("no record found, creating a new one");
+                this.createNewUser(id);
+                return -1;               
+            }else{
+                return userData.amount;
+            }    
+        }.bind(this));
+    },
+
+    /**
+     * Donate an amount of currency to a user
+     * @param {number} senderId - The userId of the sender
+     * @param {number} receiverId - The userId of the receiver
+     * @param {number} amount - The amount to donate
+     * @returns {Query} - Returns a mongoose query with true or false based on succession
+     */ 
+    donateCurrencyToUser: function(senderId, receiverId, amount){
+        return this.removeCurrencyFromUser(senderId, amount).then( function(success){
+            if(success){
+                this.addCurrencyToUser(receiverId, amount);
+                return true;
+            }
+
             return false;
-        }    
+        }.bind(this));
     },
 };
 
